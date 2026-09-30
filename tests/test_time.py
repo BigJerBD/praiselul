@@ -13,6 +13,7 @@ from praiselul.time import (
     get_overtime_balance,
     get_overtime_history,
     get_workplace_times,
+    remote_location_ids,
 )
 
 DEFAULT_CONFIG = Config(praise_url="")  # 8h/day
@@ -281,14 +282,85 @@ def test_overtime_balance():
 
 def test_workplace_times():
     summary = {"onSiteMinutes": 2400, "remoteMinutes": 600}
-    result = get_workplace_times(summary)
+    result = get_workplace_times(summary, [], {"wfh"}, TZ)
     assert result == {"On-site": Duration(2400), "Remote": Duration(600)}
 
 
 def test_workplace_times_no_remote():
     summary = {"onSiteMinutes": 2400, "remoteMinutes": 0}
-    result = get_workplace_times(summary)
+    result = get_workplace_times(summary, [], {"wfh"}, TZ)
     assert result == {"On-site": Duration(2400)}
+
+
+def test_workplace_times_closed_days_add_nothing():
+    """Closed days are already in the summary; only an open day is re-derived."""
+    summary = {"onSiteMinutes": 2400, "remoteMinutes": 600}
+    days = [
+        _make_day(
+            "2026-09-29",
+            actual_work_minutes=435,
+            sessions=[_session("2026-09-29T00:30:00Z", "2026-09-29T08:45:00Z", grossMinutes=495, locationId="wfh")],
+        )
+    ]
+    result = get_workplace_times(summary, days, {"wfh"}, TZ)
+    assert result == {"On-site": Duration(2400), "Remote": Duration(600)}
+
+
+def _make_wfh_then_open_office_day() -> dict:
+    """A closed 82-minute WFH session, then an office session still running.
+
+    Mirrors Praise's payload for such a day: the day-level totals are null while
+    a session is open, and the open session carries no ``grossMinutes``.
+    """
+    return _make_day(
+        "2026-09-30",
+        actual_work_minutes=None,
+        sessions=[
+            _session(
+                "2026-09-29T22:58:00Z", "2026-09-30T00:20:00Z",
+                grossMinutes=82, breakMinutes=0, actualWorkMinutes=82, locationId="wfh",
+            ),
+            _session("2026-09-30T00:51:00Z", None, locationId="office"),
+        ],
+    )
+
+
+def test_workplace_times_open_day_adds_live_split_before_auto_break():
+    """Under 6h of office time there is no auto-break yet, so each session's
+    share is exactly its gross: the whole closed WFH session lands on Remote."""
+    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039}
+    now = datetime(2026, 9, 30, 5, 0, tzinfo=TZ)  # office session at 4h09
+    result = get_workplace_times(summary, [_make_wfh_then_open_office_day()], {"wfh"}, TZ, now)
+    assert result == {"On-site": Duration(7247 + 249), "Remote": Duration(1039 + 82)}
+
+
+def test_workplace_times_open_day_spreads_auto_break_by_gross():
+    """Past 6h the office session owes a 1h auto-break; Praise spreads the day's
+    net over both sessions by gross, so the WFH share shrinks below its 82 gross."""
+    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039}
+    now = datetime(2026, 9, 30, 7, 45, tzinfo=TZ)  # office session at 6h54
+    result = get_workplace_times(summary, [_make_wfh_then_open_office_day()], {"wfh"}, TZ, now)
+    # day net = 82 + (414 - 60) = 436, split 82:414 -> 72 remote, 364 on-site
+    assert result == {"On-site": Duration(7247 + 364), "Remote": Duration(1039 + 72)}
+
+
+def test_workplace_times_open_day_takes_back_what_summary_already_counted():
+    """If Praise did fill the day-level net from the closed sessions, the summary
+    already holds their share; only the open session's share is added on top."""
+    day = _make_wfh_then_open_office_day()
+    day["actualWorkMinutes"] = 82
+    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039 + 82}
+    now = datetime(2026, 9, 30, 5, 0, tzinfo=TZ)
+    result = get_workplace_times(summary, [day], {"wfh"}, TZ, now)
+    assert result == {"On-site": Duration(7247 + 249), "Remote": Duration(1039 + 82)}
+
+
+def test_remote_location_ids():
+    locations = [
+        {"id": "office", "name": "Kojimachi Office", "category": "on_site"},
+        {"id": "wfh", "name": "WFH", "category": "remote"},
+    ]
+    assert remote_location_ids(locations) == {"wfh"}
 
 
 # --- get_leave_time ---
