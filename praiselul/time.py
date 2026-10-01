@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -206,12 +207,11 @@ def _current_day_worked_minutes(day: dict[str, Any], now: datetime, tz: ZoneInfo
 def _day_actual_minutes(day: dict[str, Any], tz: ZoneInfo, now: datetime | None = None) -> int:
     """Get actual work minutes for a day, computing a live value for open sessions.
 
-    An open session is checked *first*: on a multi-session day (e.g. on-site in the
-    morning, then remote) Praise populates the day-level ``actualWorkMinutes`` from
-    the already-closed sessions, so trusting it would freeze out the still-elapsing
-    open session. ``_current_day_worked_minutes`` re-sums the closed sessions plus
-    the live open one, so it stays correct in both the single- and multi-session
-    cases.
+    An open session is checked *first*: Praise leaves the day-level
+    ``actualWorkMinutes`` null while any session is open, even on a multi-session
+    day (e.g. on-site in the morning, then remote). ``_current_day_worked_minutes``
+    re-sums the closed sessions plus the live open one, so it stays correct in
+    both the single- and multi-session cases.
     """
     if _open_session(day) is not None:
         return _current_day_worked_minutes(day, now or datetime.now(tz), tz)
@@ -259,12 +259,13 @@ def _distribute_by_gross(grosses: list[int], total: int) -> list[int]:
 
     Each share is rounded on its own, so the shares may sum to ``total`` ± 1.
     This is Praise's on-site/remote attribution rule, reproduced exactly so the
-    figures match what its UI shows.
+    figures match what its UI shows: ties round up like JS ``Math.round``, not to
+    even like Python's ``round``.
     """
     gross_sum = sum(grosses)
     if gross_sum <= 0 or total <= 0:
         return [0] * len(grosses)
-    return [round(total * gross / gross_sum) for gross in grosses]
+    return [math.floor(total * (gross / gross_sum) + 0.5) for gross in grosses]
 
 
 def _open_day_workplace_minutes(
@@ -292,13 +293,19 @@ def get_workplace_times(
     tz: ZoneInfo,
     now: datetime | None = None,
 ) -> dict[str, Duration]:
-    """Monthly on-site / remote totals, including the live share of a day that
-    still has an open session (which the summary leaves out entirely)."""
+    """Monthly on-site / remote totals, including the live share of today when
+    it still has an open session (which the summary leaves out entirely).
+
+    Only today is overlaid, like the Praise UI: a past day left open by a missed
+    clock-out would otherwise be measured all the way up to ``now``.
+    """
     on_site = summary.get("onSiteMinutes", 0)
     remote = summary.get("remoteMinutes", 0)
+    now = now or datetime.now(tz)
+    today = now.astimezone(tz).strftime("%Y-%m-%d")
     for day in days:
-        if _open_session(day) is not None:
-            day_on_site, day_remote = _open_day_workplace_minutes(day, remote_ids, now or datetime.now(tz), tz)
+        if day["date"] == today and _open_session(day) is not None:
+            day_on_site, day_remote = _open_day_workplace_minutes(day, remote_ids, now, tz)
             on_site += day_on_site
             remote += day_remote
 

@@ -8,6 +8,7 @@ from praiselul.time import (
     _closed_day_worked_minutes,
     _current_day_worked_minutes,
     _day_actual_minutes,
+    _distribute_by_gross,
     get_latest_clock_in_time,
     get_leave_time,
     get_overtime_balance,
@@ -341,6 +342,20 @@ def test_workplace_times_open_day_spreads_auto_break_by_gross():
     result = get_workplace_times(summary, [_make_wfh_then_open_office_day()], {"wfh"}, TZ, now)
     # day net = 82 + (414 - 60) = 436, split 82:414 -> 72 remote, 364 on-site
     assert result == {"On-site": Duration(7247 + 364), "Remote": Duration(1039 + 72)}
+
+
+def test_workplace_times_skips_past_day_left_open():
+    """A past day with a missed clock-out stays open in Praise; measuring it up to
+    ``now`` would inflate the totals, so only today is overlaid."""
+    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039}
+    now = datetime(2026, 10, 2, 5, 0, tzinfo=TZ)
+    result = get_workplace_times(summary, [_make_wfh_then_open_office_day()], {"wfh"}, TZ, now)
+    assert result == {"On-site": Duration(7247), "Remote": Duration(1039)}
+
+
+def test_distribute_by_gross_rounds_ties_up():
+    """Praise rounds with JS ``Math.round`` (ties up), not Python's round-half-even."""
+    assert _distribute_by_gross([1, 1], 5) == [3, 3]
 
 
 # --- get_leave_time ---
