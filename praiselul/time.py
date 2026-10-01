@@ -276,25 +276,13 @@ def _open_day_workplace_minutes(
     locations, in proportion to session gross. A day with an open session has no
     day-level net yet, so the summary holds nothing for it — not even its closed
     sessions. This re-derives the split from the live per-session figures, the
-    way the Praise UI overlays it. Whatever the summary does already hold for
-    the day (its day-level net, spread over the closed sessions) is taken back
-    out so nothing is counted twice.
+    way the Praise UI overlays it.
     """
     sessions = day.get("sessions") or []
-    live_grosses = [_session_gross_minutes(session, tz, now) for session in sessions]
-    live_shares = _distribute_by_gross(live_grosses, _current_day_worked_minutes(day, now, tz))
-
-    # The open session has no grossMinutes, so the summary gave it no share.
-    summary_grosses = [int(session.get("grossMinutes") or 0) for session in sessions]
-    summary_shares = _distribute_by_gross(summary_grosses, int(day.get("actualWorkMinutes") or 0))
-
-    on_site = remote = 0
-    for session, live, counted in zip(sessions, live_shares, summary_shares):
-        if session.get("locationId") in remote_ids:
-            remote += live - counted
-        else:
-            on_site += live - counted
-    return on_site, remote
+    grosses = [_session_gross_minutes(session, tz, now) for session in sessions]
+    shares = _distribute_by_gross(grosses, _current_day_worked_minutes(day, now, tz))
+    remote = sum(share for session, share in zip(sessions, shares) if session.get("locationId") in remote_ids)
+    return sum(shares) - remote, remote
 
 
 def get_workplace_times(

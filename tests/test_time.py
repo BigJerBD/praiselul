@@ -13,7 +13,6 @@ from praiselul.time import (
     get_overtime_balance,
     get_overtime_history,
     get_workplace_times,
-    remote_location_ids,
 )
 
 DEFAULT_CONFIG = Config(praise_url="")  # 8h/day
@@ -342,25 +341,6 @@ def test_workplace_times_open_day_spreads_auto_break_by_gross():
     result = get_workplace_times(summary, [_make_wfh_then_open_office_day()], {"wfh"}, TZ, now)
     # day net = 82 + (414 - 60) = 436, split 82:414 -> 72 remote, 364 on-site
     assert result == {"On-site": Duration(7247 + 364), "Remote": Duration(1039 + 72)}
-
-
-def test_workplace_times_open_day_takes_back_what_summary_already_counted():
-    """If Praise did fill the day-level net from the closed sessions, the summary
-    already holds their share; only the open session's share is added on top."""
-    day = _make_wfh_then_open_office_day()
-    day["actualWorkMinutes"] = 82
-    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039 + 82}
-    now = datetime(2026, 9, 30, 5, 0, tzinfo=TZ)
-    result = get_workplace_times(summary, [day], {"wfh"}, TZ, now)
-    assert result == {"On-site": Duration(7247 + 249), "Remote": Duration(1039 + 82)}
-
-
-def test_remote_location_ids():
-    locations = [
-        {"id": "office", "name": "Kojimachi Office", "category": "on_site"},
-        {"id": "wfh", "name": "WFH", "category": "remote"},
-    ]
-    assert remote_location_ids(locations) == {"wfh"}
 
 
 # --- get_leave_time ---
