@@ -344,6 +344,18 @@ def test_workplace_times_open_day_spreads_auto_break_by_gross():
     assert result == {"On-site": Duration(7247 + 364), "Remote": Duration(1039 + 72)}
 
 
+def test_workplace_times_open_day_counts_break_in_progress():
+    """A running break (last clock event ``break_start``) is recorded break, so it
+    replaces the auto-break: 30 min deducted instead of 60."""
+    day = _make_wfh_then_open_office_day()
+    day["clockEvents"] = [{"type": "break_start", "timestamp": "2026-09-30T07:15:00Z"}]
+    summary = {"onSiteMinutes": 7247, "remoteMinutes": 1039}
+    now = datetime(2026, 9, 30, 7, 45, tzinfo=TZ)  # office session at 6h54, on break for 30
+    result = get_workplace_times(summary, [day], {"wfh"}, TZ, now)
+    # day net = 82 + (414 - 30) = 466, split 82:414 -> 77 remote, 389 on-site
+    assert result == {"On-site": Duration(7247 + 389), "Remote": Duration(1039 + 77)}
+
+
 def test_workplace_times_skips_past_day_left_open():
     """A past day with a missed clock-out stays open in Praise; measuring it up to
     ``now`` would inflate the totals, so only today is overlaid."""

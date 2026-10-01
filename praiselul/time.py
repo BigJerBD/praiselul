@@ -156,10 +156,32 @@ def _session_gross_minutes(session: dict[str, Any], tz: ZoneInfo, now: datetime 
     return max(0, int((end - clock_in).total_seconds() / 60))
 
 
-def _open_session_work_minutes(session: dict[str, Any], now: datetime, tz: ZoneInfo) -> int:
-    """Net minutes worked in the in-progress session, measured up to ``now``."""
+def _running_break_minutes(day: dict[str, Any], now: datetime, tz: ZoneInfo) -> int:
+    """Minutes of a break still in progress, i.e. the day's last clock event is a
+    ``break_start``. ``breakPeriods`` only holds completed pairs, so Praise adds
+    this on top for the open session, counting whole minutes like its punches.
+    """
+    events = day.get("clockEvents") or []
+    if not events or events[-1].get("type") != "break_start":
+        return 0
+    start = _parse_iso_to_local(events[-1].get("timestamp"), tz)
+    if not start:
+        return 0
+    elapsed = now.replace(second=0, microsecond=0) - start.replace(second=0, microsecond=0)
+    return max(0, int(elapsed.total_seconds() // 60))
+
+
+def _open_session_work_minutes(
+    day: dict[str, Any], session: dict[str, Any], now: datetime, tz: ZoneInfo,
+) -> int:
+    """Net minutes worked in the in-progress session, measured up to ``now``.
+
+    A break still running counts as recorded break, so worked time stays flat
+    while on break and the auto-break is suppressed, as in the Praise UI.
+    """
     gross = _session_gross_minutes(session, tz, now)
-    return _session_net_minutes(gross, _session_recorded_break_minutes(session))
+    recorded_break = _session_recorded_break_minutes(session) + _running_break_minutes(day, now, tz)
+    return _session_net_minutes(gross, recorded_break)
 
 
 def _closed_session_work_minutes(session: dict[str, Any], tz: ZoneInfo) -> int:
@@ -200,7 +222,7 @@ def _current_day_worked_minutes(day: dict[str, Any], now: datetime, tz: ZoneInfo
     total = _closed_day_worked_minutes(day, tz)
     open_session = _open_session(day)
     if open_session:
-        total += _open_session_work_minutes(open_session, now, tz)
+        total += _open_session_work_minutes(day, open_session, now, tz)
     return total
 
 
